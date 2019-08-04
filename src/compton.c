@@ -1272,7 +1272,7 @@ static void handle_new_windows(session_t *ps) {
 			}
 			auto mw = (struct managed_win *)new_w;
 			if (mw->a.map_state == XCB_MAP_STATE_VIEWABLE) {
-				map_win(ps, mw);
+				win_queue_update(mw, WIN_UPDATE_MAP);
 
 				// This window might be damaged before we called fill_win
 				// and created the damage handle. And there is not way for
@@ -1281,6 +1281,12 @@ static void handle_new_windows(session_t *ps) {
 				add_damage_from_win(ps, mw);
 			}
 		}
+	}
+}
+
+static void refresh_windows(session_t *ps) {
+	win_stack_foreach_managed(w, &ps->window_stack) {
+		win_process_updates(ps, w);
 	}
 }
 
@@ -1339,6 +1345,9 @@ static void _draw_callback(EV_P_ session_t *ps, int revents attr_unused) {
 		if (!ps->active_win || (r && r->focus != ps->active_win->base.id)) {
 			recheck_focus(ps);
 		}
+
+		// Process window updates
+		refresh_windows(ps);
 
 		// Refresh pixmaps
 		refresh_stale_images(ps);

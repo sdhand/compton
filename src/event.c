@@ -255,7 +255,7 @@ static inline void ev_destroy_notify(session_t *ps, xcb_destroy_notify_event_t *
 	auto w = find_win(ps, ev->window);
 	if (w) {
 		if (w->managed) {
-			unmap_win(ps, (struct managed_win **)&w, true);
+			win_queue_update((struct managed_win *)w, WIN_UPDATE_DESTROY);
 		} else {
 			destroy_unmanaged_win(ps, &w);
 		}
@@ -263,16 +263,35 @@ static inline void ev_destroy_notify(session_t *ps, xcb_destroy_notify_event_t *
 }
 
 static inline void ev_map_notify(session_t *ps, xcb_map_notify_event_t *ev) {
-	map_win_by_id(ps, ev->window);
+	// Unmap overlay window if it got mapped but we are currently not
+	// in redirected state.
+	if (ps->overlay && ev->window == ps->overlay && !ps->redirected) {
+		log_debug("Overlay is mapped while we are not redirected");
+		auto e = xcb_request_check(ps->c, xcb_unmap_window(ps->c, ps->overlay));
+		if (e) {
+			log_error("Failed to unmap the overlay window");
+			free(e);
+		}
+		// We don't track the overlay window, so we can return
+		return;
+	}
+
+	auto w = find_managed_win(ps, ev->window);
+	if (!w) {
+		return;
+	}
+
+	win_queue_update(w, WIN_UPDATE_MAP);
+
 	// FocusIn/Out may be ignored when the window is unmapped, so we must
 	// recheck focus here
-	ps->pending_updates = true; // to update focus
+	ps->pending_updates = true;        // to update focus
 }
 
 static inline void ev_unmap_notify(session_t *ps, xcb_unmap_notify_event_t *ev) {
 	auto w = find_managed_win(ps, ev->window);
 	if (w) {
-		unmap_win(ps, &w, false);
+		win_queue_update(w, WIN_UPDATE_UNMAP);
 	}
 }
 
@@ -298,7 +317,7 @@ static inline void ev_reparent_notify(session_t *ps, xcb_reparent_notify_event_t
 		auto w = find_win(ps, ev->window);
 		if (w) {
 			if (w->managed) {
-				unmap_win(ps, (struct managed_win **)&w, true);
+				win_queue_update((struct managed_win *)w, WIN_UPDATE_DESTROY);
 			} else {
 				destroy_unmanaged_win(ps, &w);
 			}
@@ -400,8 +419,7 @@ static inline void ev_property_notify(session_t *ps, xcb_property_notify_event_t
 	}
 
 	if (ps->root == ev->window) {
-		if (ps->o.use_ewmh_active_win &&
-		    ps->atoms->a_NET_ACTIVE_WINDOW == ev->atom) {
+		if (ps->o.use_ewmh_active_win && ps->atoms->a_NET_ACTIVE_WINDOW == ev->atom) {
 			// to update focus
 			ps->pending_updates = true;
 		} else {
@@ -488,7 +506,7 @@ static inline void ev_property_notify(session_t *ps, xcb_property_notify_event_t
 	}
 
 	// If role changes
-	if (ps->o.track_wdata && ps->atoms->aWM_WINDOW_ROLE== ev->atom) {
+	if (ps->o.track_wdata && ps->atoms->aWM_WINDOW_ROLE == ev->atom) {
 		auto w = find_toplevel(ps, ev->window);
 		if (w && 1 == win_get_role(ps, w)) {
 			win_on_factor_change(ps, w);

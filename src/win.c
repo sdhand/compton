@@ -43,6 +43,13 @@
 
 #include "win.h"
 
+struct managed_win_internal {
+	struct managed_win base;
+
+	/// A bit mask of unhandled window updates
+	uint_fast32_t pending_updates;
+};
+
 #define OPAQUE (0xffffffff)
 static const int WIN_GET_LEADER_MAX_RECURSION = 20;
 static const int ROUNDED_PIXELS = 1;
@@ -1127,7 +1134,9 @@ struct win *fill_win(session_t *ps, struct win *w) {
 	}
 
 	// Allocate and initialize the new win structure
-	auto new = cmalloc(struct managed_win);
+	auto new_internal = cmalloc(struct managed_win_internal);
+	auto new = (struct managed_win *)new_internal;
+	new_internal->pending_updates = 0;
 
 	// Fill structure
 	// We only need to initialize the part that are not initialized
@@ -1736,6 +1745,7 @@ void restack_top(session_t *ps, struct win *w) {
 }
 
 void unmap_win(session_t *ps, struct managed_win **_w, bool destroy) {
+	assert(ps->server_grabbed);
 	auto w = *_w;
 
 	winstate_t target_state = destroy ? WSTATE_DESTROYING : WSTATE_UNMAPPING;
@@ -1873,6 +1883,7 @@ void win_update_screen(session_t *ps, struct managed_win *w) {
 
 /// Map an already registered window
 void map_win(session_t *ps, struct managed_win *w) {
+	assert(ps->server_grabbed);
 	assert(w);
 
 	// Don't care about window mapping if it's an InputOnly window
@@ -2010,28 +2021,6 @@ void map_win(session_t *ps, struct managed_win *w) {
 	}
 }
 
-void map_win_by_id(session_t *ps, xcb_window_t id) {
-	// Unmap overlay window if it got mapped but we are currently not
-	// in redirected state.
-	if (ps->overlay && id == ps->overlay && !ps->redirected) {
-		log_debug("Overlay is mapped while we are not redirected");
-		auto e = xcb_request_check(ps->c, xcb_unmap_window(ps->c, ps->overlay));
-		if (e) {
-			log_error("Failed to unmap the overlay window");
-			free(e);
-		}
-		// We don't track the overlay window, so we can return
-		return;
-	}
-
-	auto w = find_managed_win(ps, id);
-	if (!w) {
-		return;
-	}
-
-	map_win(ps, w);
-}
-
 /**
  * Find a managed window from window id in window linked list of the session.
  */
@@ -2150,6 +2139,101 @@ win_is_fullscreen_xcb(xcb_connection_t *c, const struct atom *a, const xcb_windo
 	}
 	free(reply);
 	return false;
+}
+
+/// Queue an update on a window. A series of sanity checks are performed
+void win_queue_update(struct managed_win *_w, enum win_update update) {
+	auto w = (struct managed_win_internal *)_w;
+	assert(popcount(update) == 1);
+
+	if (unlikely(w->pending_updates & WIN_UPDATE_DESTROY)) {
+		log_error("Updates queued on a destroyed window %#010x (%s)",
+		          w->base.base.id, w->base.name);
+		return;
+	}
+
+	if (update == WIN_UPDATE_DESTROY) {
+		w->pending_updates = WIN_UPDATE_DESTROY;
+		return;
+	}
+
+	// Invariants:
+	// A mapped window can have 2 sets of flags: 1) UNMAP 2) MAP | UNMAP
+	// A unmapped window can only have the MAP flag set
+
+	if (w->pending_updates == 0) {
+		bool previously_mapped =
+		    w->base.state != WSTATE_UNMAPPED && w->base.state != WSTATE_UNMAPPING;
+		if (unlikely(previously_mapped && update == WIN_UPDATE_MAP)) {
+			log_error("Mapping an already mapped window %#010x (%s)",
+			          w->base.base.id, w->base.name);
+		} else if (unlikely(!previously_mapped && update == WIN_UPDATE_UNMAP)) {
+			log_error("Unmapping an already unmapped window %#010x (%s)",
+			          w->base.base.id, w->base.name);
+		} else {
+			// If the window is mapped, update must be WIN_UPDATE_UNMAP
+			// If the windos is unmapped, update must be WIN_UPDATE_MAP
+			// Invariants still hold
+			w->pending_updates = update;
+		}
+		return;
+	}
+
+	// Reaching here means the window already has some flag set
+	// Setting/unsetting the MAP bit never breaks the invariants when some other flags
+	// are already set.
+	if (update == WIN_UPDATE_MAP) {
+		if (unlikely(w->pending_updates & WIN_UPDATE_MAP)) {
+			log_error("Window %#010x (%s) is mapped multiple times",
+			          w->base.base.id, w->base.name);
+			return;
+		}
+		// Mapping a window sets the MAP bit, indicate the window is mapped. But
+		// the UNMAP bit is still kept, because when a window is unmapped then
+		// mapped, that window has to be "refreshed".
+		w->pending_updates |= WIN_UPDATE_MAP;
+	} else if (update == WIN_UPDATE_UNMAP) {
+		if (unlikely(!(w->pending_updates & WIN_UPDATE_MAP))) {
+			log_error("Window %#010x (%s) is unmapped multiple times",
+			          w->base.base.id, w->base.name);
+			return;
+		}
+		// Unmapping a window clears the MAP bit, indicate the window is not
+		// mapped.
+		w->pending_updates &= ~(uint_fast32_t)WIN_UPDATE_MAP;
+	}
+}
+
+/// Process pending updates on a window. Has to be called in X critical section
+void win_process_updates(struct session *ps, struct managed_win *_w) {
+	assert(ps->server_grabbed);
+	auto w = (struct managed_win_internal *)_w;
+	if (w->pending_updates & WIN_UPDATE_DESTROY) {
+		// No matter what else happened, a destroyed window is destroyed. So this
+		// takes precedence.
+		unmap_win(ps, &_w, true);
+		return;
+	}
+	
+	if ((w->pending_updates & WIN_UPDATE_MAP) &&
+	           (w->pending_updates & WIN_UPDATE_UNMAP)) {
+		// A unmapped window cannot have both map and unmap flag set, this is
+		// guaranteed by win_queue_update
+		assert(w->base.state != WSTATE_UNMAPPED && w->base.state != WSTATE_UNMAPPING);
+
+		// Having both unmap and map set indicates a mapped window has gone
+		// through (potentially multiple) unmaps, and ended up mapped in the end.
+		// this can change its attributes, and also invalidates its named pixmap.
+		// We have to go through one unmap/map cycle
+		unmap_win(ps, &_w, false);
+		map_win(ps, _w);
+	} else if (w->pending_updates & WIN_UPDATE_MAP) {
+		map_win(ps, _w);
+	} else if (w->pending_updates & WIN_UPDATE_UNMAP) {
+		unmap_win(ps, &_w, false);
+	}
+
+	w->pending_updates = 0;
 }
 
 /**

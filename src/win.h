@@ -75,6 +75,12 @@ typedef enum {
 	WMODE_SOLID,              // The window is opaque including the frame
 } winmode_t;
 
+enum win_update {
+	WIN_UPDATE_MAP = 1,
+	WIN_UPDATE_UNMAP = 2,
+	WIN_UPDATE_DESTROY = 4,
+};
+
 /// Transition table:
 /// (DESTROYED is when the win struct is destroyed and freed)
 /// ('o' means in all other cases)
@@ -324,6 +330,11 @@ struct managed_win {
 #endif
 };
 
+/// Process pending updates on a window. Has to be called in X critical section
+void win_process_updates(struct session *ps, struct managed_win *_w);
+/// Queue an update on a window. A series of sanity checks are performed
+void win_queue_update(struct managed_win *_w, enum win_update update);
+
 void win_release_image(backend_t *base, struct managed_win *w);
 bool must_use win_bind_image(session_t *ps, struct managed_win *w);
 
@@ -444,13 +455,8 @@ void restack_above(session_t *ps, struct win *w, xcb_window_t below);
 void restack_bottom(session_t *ps, struct win *w);
 /// Move window `w` to the top of the stack
 void restack_top(session_t *ps, struct win *w);
-/// Unmap or destroy a window
-void unmap_win(session_t *ps, struct managed_win **, bool destroy);
 /// Destroy an unmanaged window
 void destroy_unmanaged_win(session_t *ps, struct win **w);
-
-void map_win(session_t *ps, struct managed_win *w);
-void map_win_by_id(session_t *ps, xcb_window_t id);
 
 /**
  * Execute fade callback of a window if fading finished.
