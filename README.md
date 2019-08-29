@@ -1,33 +1,11 @@
 Compton
 =======
 
-**This is a development branch, bug to be expected**
-
-This is forked from the original Compton because that seems to have become unmaintained.
-
-The current battle plan of this fork is to refactor it to make the code _possible_ to maintain, so potential contributors won't be scared away when they take a look at the code.
-
-We also try to fix bugs.
+This fork of Compton adds anti-aliased rounded corners, using `xrender`.
 
 The original README can be found [here](README_orig.md)
 
-## Call for testers
-
-### `--experimental-backends`
-
-This flag enables the refactored/partially rewritten backends.
-
-Currently new backends features better vsync with the xrender backend, improved input lag with the glx backend (for non-NVIDIA users). The performance should be on par with the old backends.
-
-New backend features will only be implemented on the new backends from now on, and the old backends will eventually be phased out after the new backends stabilizes.
-
-To test the new backends, add the `--experimental-backends` flag to the command line you used to run compton. This flag is not available from the configuration file.
-
-To report issues with the new backends, please state explicitly you are using the new backends in your report.
-
-## Change Log
-
-See [Releases](https://github.com/yshui/compton/releases)
+![sample.png](https://0x0.st/z4eO.png)
 
 ## Build
 
@@ -62,7 +40,11 @@ Assuming you already have all the usual building tools installed (e.g. gcc, pyth
 On Debian based distributions (e.g. Ubuntu), the list of needed packages are
 
 ```
-libxext-dev libxcb1-dev libxcb-damage0-dev libxcb-xfixes0-dev libxcb-shape0-dev libxcb-render-util0-dev libxcb-render0-dev libxcb-randr0-dev libxcb-composite0-dev libxcb-image0-dev libxcb-present-dev libxcb-xinerama0-dev libpixman-1-dev libdbus-1-dev libconfig-dev libxdg-basedir-dev libgl1-mesa-dev  libpcre2-dev  libevdev-dev uthash-dev libevdev2
+ libxext-dev libxcb1-dev libxcb-damage0-dev libxcb-xfixes0-dev
+libxcb-shape0-dev libxcb-render-util0-dev libxcb-render0-dev libxcb-randr0-dev
+libxcb-composite0-dev libxcb-image0-dev libxcb-present-dev libxcb-xinerama0-dev
+libpixman-1-dev libdbus-1-dev libconfig-dev libxdg-basedir-dev libgl1-mesa-dev
+libpcre2-dev  libevdev-dev uthash-dev libevdev2
 ```
 
 To build the documents, you need `asciidoc`
@@ -100,18 +82,14 @@ $ ninja -C build install
 
 Default install prefix is `/usr/local`, you can change it with `meson configure -Dprefix=<path> build`
 
-## How to Contribute
+## Usage
 
-### Code
+Drop this into your `compton.conf`:  
+```ini
+corner-radius = 12;
+```
 
-You can look at the [Projects](https://github.com/yshui/compton/projects) page, and see if there is anything interests you. Or you can take a look at the [Issues](https://github.com/yshui/compton/issues).
-
-### Non-code
-
-Even if you don't want to contribute code, you can still contribute by compiling and running this branch, and report any issue you can find.
-
-Contributions to the documents and wiki will also be appreciated.
-
-## Contributors
-
-See [CONTRIBUTORS](CONTRIBUTORS)
+Alternatively, run compton with the `--corner-radius` flag:  
+```shell
+$ compton --corner-radius 12
+```
