@@ -1140,6 +1140,8 @@ struct win *fill_win(session_t *ps, struct win *w) {
 	    // Initialized during paint
 	    .paint = PAINT_INIT,
 	    .shadow_paint = PAINT_INIT,
+
+	    .corner_radius = 0,
 	};
 
 	assert(!w->destroyed);

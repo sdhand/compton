@@ -23,8 +23,8 @@
 #include "kernel.h"
 #include "log.h"
 #include "region.h"
-#include "win_defs.h"
 #include "types.h"
+#include "win_defs.h"
 
 typedef struct session session_t;
 
@@ -235,6 +235,8 @@ typedef struct options {
 
 	// Don't use EWMH to detect fullscreen applications
 	bool no_ewmh_fullscreen;
+
+	int corner_radius;
 } options_t;
 
 extern const char *const BACKEND_STRS[NUM_BKEND + 1];

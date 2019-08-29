@@ -186,8 +186,52 @@ void free_paint(session_t *ps, paint_t *ppaint) {
 	ppaint->pixmap = XCB_NONE;
 }
 
+uint32_t
+make_circle(int cx, int cy, int radius, uint32_t max_ntraps, xcb_render_trapezoid_t traps[]) {
+	uint32_t n = 0, k = 0;
+	int y1, y2;
+	double w;
+	while (k < max_ntraps) {
+		y1 = (int)(-radius * cos(M_PI * k / max_ntraps));
+		traps[n].top = (cy + y1) << 16;
+		traps[n].left.p1.y = (cy + y1) << 16;
+		traps[n].right.p1.y = (cy + y1) << 16;
+		w = sqrt(radius * radius - y1 * y1) * 65536;
+		traps[n].left.p1.x = (int)((cx << 16) - w);
+		traps[n].right.p1.x = (int)((cx << 16) + w);
+
+		do {
+			k++;
+			y2 = (int)(-radius * cos(M_PI * k / max_ntraps));
+		} while (y1 == y2);
+
+		traps[n].bottom = (cy + y2) << 16;
+		traps[n].left.p2.y = (cy + y2) << 16;
+		traps[n].right.p2.y = (cy + y2) << 16;
+		w = sqrt(radius * radius - y2 * y2) * 65536;
+		traps[n].left.p2.x = (int)((cx << 16) - w);
+		traps[n].right.p2.x = (int)((cx << 16) + w);
+		n++;
+	}
+	return n;
+}
+
+uint32_t make_rectangle(int x, int y, int wid, int hei, xcb_render_trapezoid_t traps[]) {
+	traps[0].top = y << 16;
+	traps[0].left.p1.y = y << 16;
+	traps[0].left.p1.x = x << 16;
+	traps[0].left.p2.y = (y + hei) << 16;
+	traps[0].left.p2.x = x << 16;
+	traps[0].bottom = (y + hei) << 16;
+	traps[0].right.p1.x = (x + wid) << 16;
+	traps[0].right.p1.y = y << 16;
+	traps[0].right.p2.x = (x + wid) << 16;
+	traps[0].right.p2.y = (y + hei) << 16;
+	return 1;
+}
+
 void render(session_t *ps, int x, int y, int dx, int dy, int wid, int hei, double opacity,
-            bool argb, bool neg, xcb_render_picture_t pict, glx_texture_t *ptex,
+            bool argb, bool neg, int cr, xcb_render_picture_t pict, glx_texture_t *ptex,
             const region_t *reg_paint, const glx_prog_main_t *pprogram) {
 	switch (ps->o.backend) {
 	case BKEND_XRENDER:
@@ -195,12 +239,55 @@ void render(session_t *ps, int x, int y, int dx, int dy, int wid, int hei, doubl
 		auto alpha_step = (int)(opacity * MAX_ALPHA);
 		xcb_render_picture_t alpha_pict = ps->alpha_picts[alpha_step];
 		if (alpha_step != 0) {
-			uint8_t op = ((!argb && !alpha_pict) ? XCB_RENDER_PICT_OP_SRC
-			                                     : XCB_RENDER_PICT_OP_OVER);
-			xcb_render_composite(
-			    ps->c, op, pict, alpha_pict, ps->tgt_buffer.pict,
-			    to_i16_checked(x), to_i16_checked(y), 0, 0, to_i16_checked(dx),
-			    to_i16_checked(dy), to_u16_checked(wid), to_u16_checked(hei));
+			if (cr) {
+				xcb_render_picture_t p_tmp = x_create_picture_with_standard(
+				    ps->c, ps->root, wid, hei, XCB_PICT_STANDARD_ARGB_32, 0, 0);
+				xcb_render_color_t trans = {
+				    .red = 0, .blue = 0, .green = 0, .alpha = 0};
+				const xcb_rectangle_t rect = {.x = 0,
+				                              .y = 0,
+				                              .width = to_u16_checked(wid),
+				                              .height = to_u16_checked(hei)};
+				xcb_render_fill_rectangles(ps->c, XCB_RENDER_PICT_OP_SRC,
+				                           p_tmp, trans, 1, &rect);
+
+				uint32_t max_ntraps = 15;
+				xcb_render_trapezoid_t traps[4 * max_ntraps + 5];
+
+				uint32_t n = make_circle(cr, cr, cr, max_ntraps, traps);
+				n += make_circle(wid - cr, cr, cr, max_ntraps, traps + n);
+				n += make_circle(wid - cr, hei - cr, cr, max_ntraps, traps + n);
+				n += make_circle(cr, hei - cr, cr, max_ntraps, traps + n);
+				n += make_rectangle(0, cr, cr, hei - 2 * cr, traps + n);
+				n += make_rectangle(cr, 0, wid - 2 * cr, cr, traps + n);
+				n += make_rectangle(wid - cr, cr, cr, hei - 2 * cr, traps + n);
+				n += make_rectangle(cr, hei - cr, wid - 2 * cr, cr, traps + n);
+				n += make_rectangle(cr, cr, wid - 2 * cr, hei - 2 * cr,
+				                    traps + n);
+
+				xcb_render_trapezoids(
+				    ps->c, XCB_RENDER_PICT_OP_OVER, pict, p_tmp,
+				    x_get_pictfmt_for_standard(ps->c, XCB_PICT_STANDARD_ARGB_32),
+				    to_i16_checked(cr), 0, n, traps);
+
+				xcb_render_composite(
+				    ps->c, XCB_RENDER_PICT_OP_OVER, p_tmp, alpha_pict,
+				    ps->tgt_buffer.pict, to_i16_checked(x), to_i16_checked(y),
+				    0, 0, to_i16_checked(dx), to_i16_checked(dy),
+				    to_u16_checked(wid), to_u16_checked(hei));
+
+				xcb_render_free_picture(ps->c, p_tmp);
+
+			} else {
+				uint8_t op =
+				    ((!argb && !alpha_pict) ? XCB_RENDER_PICT_OP_SRC
+				                            : XCB_RENDER_PICT_OP_OVER);
+				xcb_render_composite(
+				    ps->c, op, pict, alpha_pict, ps->tgt_buffer.pict,
+				    to_i16_checked(x), to_i16_checked(y), 0, 0,
+				    to_i16_checked(dx), to_i16_checked(dy),
+				    to_u16_checked(wid), to_u16_checked(hei));
+			}
 		}
 		break;
 	}
@@ -229,8 +316,8 @@ paint_region(session_t *ps, const struct managed_win *w, int x, int y, int wid, 
 	const bool argb = (w && (win_has_alpha(w) || ps->o.force_win_blend));
 	const bool neg = (w && w->invert_color);
 
-	render(ps, x, y, dx, dy, wid, hei, opacity, argb, neg, pict,
-	       (w ? w->paint.ptex : ps->root_tile_paint.ptex), reg_paint,
+	render(ps, x, y, dx, dy, wid, hei, opacity, argb, neg, (w ? w->corner_radius : 0),
+	       pict, (w ? w->paint.ptex : ps->root_tile_paint.ptex), reg_paint,
 #ifdef CONFIG_OPENGL
 	       w ? &ps->glx_prog_win : NULL
 #else
@@ -613,7 +700,7 @@ win_paint_shadow(session_t *ps, struct managed_win *w, region_t *reg_paint) {
 	}
 
 	render(ps, 0, 0, w->g.x + w->shadow_dx, w->g.y + w->shadow_dy, w->shadow_width,
-	       w->shadow_height, w->shadow_opacity, true, false, w->shadow_paint.pict,
+	       w->shadow_height, w->shadow_opacity, true, false, 0, w->shadow_paint.pict,
 	       w->shadow_paint.ptex, reg_paint, NULL);
 }
 
@@ -835,8 +922,8 @@ void paint_all(session_t *ps, struct managed_win *t, bool ignore_damage) {
 		// Calculate the region upon which the root window is to be
 		// painted based on the ignore region of the lowest window, if
 		// available
-		pixman_region32_subtract(&reg_tmp, &region, t->reg_ignore);
-		reg_paint = &reg_tmp;
+		// pixman_region32_subtract(&reg_tmp, &region, t->reg_ignore);
+		reg_paint = &region;
 	} else {
 		reg_paint = &region;
 	}
@@ -861,26 +948,26 @@ void paint_all(session_t *ps, struct managed_win *t, bool ignore_damage) {
 
 			// Shadow doesn't need to be painted underneath the body
 			// of the windows above. Because no one can see it
-			pixman_region32_subtract(&reg_tmp, &region, w->reg_ignore);
+			// pixman_region32_subtract(&reg_tmp, &region, w->reg_ignore);
 
 			// Mask out the region we don't want shadow on
-			if (pixman_region32_not_empty(&ps->shadow_exclude_reg))
-				pixman_region32_subtract(&reg_tmp, &reg_tmp,
-				                         &ps->shadow_exclude_reg);
+			/*if (pixman_region32_not_empty(&ps->shadow_exclude_reg))
+			        pixman_region32_subtract(&reg_tmp, &region,
+			                                 &ps->shadow_exclude_reg);*/
 
 			// Might be worth while to crop the region to shadow
 			// border
 			assert(w->shadow_width >= 0 && w->shadow_height >= 0);
 			pixman_region32_intersect_rect(
-			    &reg_tmp, &reg_tmp, w->g.x + w->shadow_dx, w->g.y + w->shadow_dy,
+			    &reg_tmp, &region, w->g.x + w->shadow_dx, w->g.y + w->shadow_dy,
 			    (uint)w->shadow_width, (uint)w->shadow_height);
 
 			// Mask out the body of the window from the shadow if
 			// needed Doing it here instead of in make_shadow() for
 			// saving GPU power and handling shaped windows (XXX
 			// unconfirmed)
-			if (!ps->o.wintype_option[w->window_type].full_shadow)
-				pixman_region32_subtract(&reg_tmp, &reg_tmp, &bshape);
+			/*if (!ps->o.wintype_option[w->window_type].full_shadow)
+			        pixman_region32_subtract(&reg_tmp, &reg_tmp, &bshape);*/
 
 			if (ps->o.xinerama_shadow_crop && w->xinerama_scr >= 0 &&
 			    w->xinerama_scr < ps->xinerama_nscrs)
@@ -906,8 +993,8 @@ void paint_all(session_t *ps, struct managed_win *t, bool ignore_damage) {
 		// window and its bounding region.
 		// Remember, reg_ignore is the union of all windows above the current
 		// window.
-		pixman_region32_subtract(&reg_tmp, &region, w->reg_ignore);
-		pixman_region32_intersect(&reg_tmp, &reg_tmp, &bshape);
+		// pixman_region32_subtract(&reg_tmp, &region, w->reg_ignore);
+		pixman_region32_intersect(&reg_tmp, &region, &bshape);
 		pixman_region32_fini(&bshape);
 
 		if (pixman_region32_not_empty(&reg_tmp)) {

@@ -11,8 +11,8 @@
 
 #include <X11/Xlib-xcb.h>
 #include <X11/Xlib.h>
-#include <X11/extensions/sync.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/sync.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -470,6 +470,8 @@ static struct managed_win *paint_preprocess(session_t *ps, bool *fade_running) {
 		} else {
 			w->frame_opacity = 1.0;
 		}
+
+		w->corner_radius = ps->o.corner_radius;
 
 		// Update window mode
 		w->mode = win_calc_mode(w);
