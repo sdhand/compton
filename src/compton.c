@@ -11,8 +11,8 @@
 
 #include <X11/Xlib-xcb.h>
 #include <X11/Xlib.h>
-#include <X11/extensions/sync.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/sync.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -471,6 +471,8 @@ static struct managed_win *paint_preprocess(session_t *ps, bool *fade_running) {
 			w->frame_opacity = 1.0;
 		}
 
+		w->corner_radius = ps->o.corner_radius;
+
 		// Update window mode
 		w->mode = win_calc_mode(w);
 
@@ -556,9 +558,9 @@ static struct managed_win *paint_preprocess(session_t *ps, bool *fade_running) {
 		if (w->mode == WMODE_SOLID && !ps->o.force_win_blend) {
 			region_t *tmp = rc_region_new();
 			if (w->frame_opacity == 1)
-				*tmp = win_get_bounding_shape_global_by_val(w);
+				*tmp = win_get_bounding_shape_global_by_val(w, false);
 			else {
-				win_get_region_noframe_local(w, tmp);
+				win_get_region_noframe_local(w, tmp, false);
 				pixman_region32_intersect(tmp, tmp, &w->bounding_shape);
 				pixman_region32_translate(tmp, w->g.x, w->g.y);
 			}
