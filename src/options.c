@@ -117,6 +117,9 @@ static void usage(int ret) {
 	    "--corner-radius value\n"
 	    "  Round the corners of windows. (defaults to 0)\n"
 	    "\n"
+	    "--rounded-corners-exclude condition\n"
+	    "  Exclude conditions for rounded corners.\n"
+	    "\n"
 	    "--mark-wmwin-focused\n"
 	    "  Try to detect WM windows and mark them as active.\n"
 	    "\n"
@@ -416,6 +419,7 @@ static const struct option longopts[] = {
     {"log-file", required_argument, NULL, 322},
     {"use-damage", no_argument, NULL, 323},
     {"corner-radius", required_argument, NULL, 324},
+    {"rounded-corners-exclude", required_argument, NULL, 325},
     {"experimental-backends", no_argument, NULL, 733},
     {"monitor-repaint", no_argument, NULL, 800},
     {"diagnostics", no_argument, NULL, 801},
@@ -790,11 +794,15 @@ void get_cfg(options_t *opt, int argc, char *const *argv, bool shadow_enable,
 		P_CASEBOOL(319, no_x_selection);
 		P_CASEBOOL(323, use_damage);
         case 324: opt->corner_radius = atoi(optarg); break;
-		P_CASEBOOL(733, experimental_backends);
-		P_CASEBOOL(800, monitor_repaint);
+		case 325:
+            // --rounded-corners-exclude
+            condlst_add(&opt->rounded_corners_blacklist, optarg);
+            break;
+        P_CASEBOOL(733, experimental_backends);
+        P_CASEBOOL(800, monitor_repaint);
 		case 801: opt->print_diagnostics = true; break;
-		P_CASEBOOL(802, debug_mode);
-		P_CASEBOOL(803, no_ewmh_fullscreen);
+        P_CASEBOOL(802, debug_mode);
+        P_CASEBOOL(803, no_ewmh_fullscreen);
 		default: usage(1); break;
 #undef P_CASEBOOL
 		}
